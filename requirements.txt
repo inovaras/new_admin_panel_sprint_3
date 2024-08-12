@@ -1,0 +1,5 @@
+certifi==2024.7.4
+elastic-transport==8.15.0
+elasticsearch==8.14.0
+psycopg2==2.9.9
+urllib3==2.2.2
