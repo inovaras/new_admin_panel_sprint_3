@@ -35,12 +35,20 @@ services:
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
 
+
   etl-process:
     image: python:3.11-slim
     volumes:
       - ./etl:/app
     working_dir: /app
-    command: ["python", "etl.py"]
+    command: >
+      bash -c "
+        python3 -m venv venv &&
+        . venv/bin/activate &&
+        pip install --upgrade pip &&
+        pip install -r requirements.txt &&
+        python etl.py
+      "
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
