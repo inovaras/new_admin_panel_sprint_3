@@ -39,8 +39,8 @@ services:
   etl-process:
     image: python:3.11-slim
     volumes:
-      - ./etl:/app
-    working_dir: /app
+      - ./etl:/etl
+    working_dir: /etl
     command: >
       bash -c "
         python3 -m venv venv &&
