@@ -6,21 +6,20 @@ from elasticsearch import Elasticsearch, helpers
 import backoff
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 from state import JsonFileStorage, State
 
 # Конфигурация
-PG_HOST = os.environ.get('PG_HOST', "localhost")
-PG_PORT = int(os.environ.get('PG_PORT', 5432))
-POSTGRES_USER = os.environ.get('POSTGRES_USER')
-POSTGRES_PASSWORD = os.environ.get('POSTGRES_PASSWORD')
-POSTGRES_DB = os.environ.get('POSTGRES_DB')
+PG_HOST = os.environ.get('POSTGRES_HOST', 'theatre-db')
+PG_PORT = os.environ.get('POSTGRES_PORT', 5432)
+POSTGRES_USER = 'app'
+POSTGRES_PASSWORD = '123qwe'
+POSTGRES_DB = 'movies_database'
 
-ES_HOST = os.environ.get('ES_HOST', "http://localhost:9200")
+ES_HOST = 'http://localhost:9200'
 INDEX_NAME = "movies"
-STATE_FILE_PATH = "sync_state.json"  # Путь к файлу для хранения состояния
+STATE_FILE_PATH = "sync_state.json"
 
 
 def get_pg_connection():
@@ -33,24 +32,45 @@ def get_pg_connection():
         database=POSTGRES_DB
     )
 
-
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def get_es_client():
-    """ Подключение к Elasticsearch """
-    return Elasticsearch([ES_HOST])
-
-
-def extract_data(conn, last_synced_id, batch_size=100):
+def extract_data(conn, last_synced_id=None, batch_size=100):
     """ Извлечение данных из PostgreSQL """
     with conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT id, title, description, imdb_rating, genres, directors, actors, writers
-            FROM movies
-            WHERE id > %s
-            ORDER BY id ASC
-            LIMIT %s;
-        """, (last_synced_id, batch_size))
+        # Если last_synced_id пустой, пропускаем условие фильтрации
+        if last_synced_id:
+            cursor.execute("""
+                SELECT fw.id, fw.title, fw.description, fw.rating, 
+                       array_agg(DISTINCT g.name) AS genres,
+                       array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'director') AS directors,
+                       array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'actor') AS actors,
+                       array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'writer') AS writers
+                FROM content.film_work fw
+                LEFT JOIN content.genre_film_work gfw ON fw.id = gfw.film_work_id
+                LEFT JOIN content.genre g ON gfw.genre_id = g.id
+                LEFT JOIN content.person_film_work pfw ON fw.id = pfw.film_work_id
+                LEFT JOIN content.person p ON pfw.person_id = p.id
+                WHERE fw.id > %s
+                GROUP BY fw.id
+                ORDER BY fw.id ASC
+                LIMIT %s;
+            """, (last_synced_id, batch_size))
+        else:
+            cursor.execute("""
+                SELECT fw.id, fw.title, fw.description, fw.rating, 
+                       array_agg(DISTINCT g.name) AS genres,
+                       array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'director') AS directors,
+                       array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'actor') AS actors,
+                       array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'writer') AS writers
+                FROM content.film_work fw
+                LEFT JOIN content.genre_film_work gfw ON fw.id = gfw.film_work_id
+                LEFT JOIN content.genre g ON gfw.genre_id = g.id
+                LEFT JOIN content.person_film_work pfw ON fw.id = pfw.film_work_id
+                LEFT JOIN content.person p ON pfw.person_id = p.id
+                GROUP BY fw.id
+                ORDER BY fw.id ASC
+                LIMIT %s;
+            """, (batch_size,))
         return cursor.fetchall()
+
 
 
 def transform_data(records):
@@ -65,14 +85,18 @@ def transform_data(records):
                 "description": record[2],
                 "imdb_rating": record[3],
                 "genres": record[4],
-                "directors_names": [d['name'] for d in record[5]],
-                "actors_names": [a['name'] for a in record[6]],
-                "writers_names": [w['name'] for w in record[7]],
-                "directors": record[5],
-                "actors": record[6],
-                "writers": record[7]
+                "directors_names": record[5],
+                "actors_names": record[6],
+                "writers_names": record[7]
             }
         }
+
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=10)
+def get_es_client():
+    """ Подключение к Elasticsearch с попытками повторного подключения """
+    time.sleep(10)
+    return Elasticsearch([ES_HOST])
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
@@ -86,7 +110,6 @@ def etl_process():
     pg_conn = get_pg_connection()
     es_client = get_es_client()
 
-    # Инициализация хранилища состояния и объекта состояния
     storage = JsonFileStorage(STATE_FILE_PATH)
     state = State(storage)
 
@@ -102,7 +125,6 @@ def etl_process():
             transformed_data = list(transform_data(records))
             load_data_to_es(es_client, transformed_data)
 
-            # Обновление состояния после успешной загрузки
             new_last_synced_id = records[-1][0]
             state.set_state('last_synced_id', new_last_synced_id)
             print(f"Обработано и загружено {len(records)} записей. Последний ID: {new_last_synced_id}")
