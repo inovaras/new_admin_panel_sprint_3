@@ -1,12 +1,12 @@
-import os
-import time
-import json
-import psycopg2
-from elasticsearch import Elasticsearch, helpers
-import backoff
-from dotenv import load_dotenv
 import logging
+import os
 import sys
+import time
+
+import backoff
+import psycopg2
+from dotenv import load_dotenv
+from elasticsearch import Elasticsearch, helpers
 
 load_dotenv()
 
@@ -14,13 +14,13 @@ from state import JsonFileStorage, State
 
 
 POSTGRES_HOST = os.environ.get('POSTGRES_HOST', 'theatre-db')
-POSTGRES_PORT = int(os.environ.get('POSTGRES_PORT', 5432))
+POSTGRES_PORT = int(os.environ.get('POSTGRES_PORT'), 5432)
 POSTGRES_USER = 'app'
 POSTGRES_PASSWORD = '123qwe'
 POSTGRES_DB = 'movies_database'
 
 ELASTICSEARCH_HOST = os.environ.get('ELASTICSEARCH_HOST', 'elasticsearch')
-ELASTICSEARCH_PORT = int(os.environ.get('ELASTICSEARCH_PORT'))
+ELASTICSEARCH_PORT = int(os.environ.get('ELASTICSEARCH_PORT'), 9200)
 INDEX_NAME = "movies"
 STATE_FILE_PATH = "sync_state.json"
 
