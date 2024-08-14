@@ -17,7 +17,7 @@ POSTGRES_USER = 'app'
 POSTGRES_PASSWORD = '123qwe'
 POSTGRES_DB = 'movies_database'
 
-ES_HOST = 'http://localhost:9200'
+ELASTICSEARCH_HOST = 'http://localhost:9200'
 INDEX_NAME = "movies"
 STATE_FILE_PATH = "sync_state.json"
 
@@ -95,8 +95,8 @@ def transform_data(records):
 @backoff.on_exception(backoff.expo, Exception, max_tries=10)
 def get_es_client():
     """ Подключение к Elasticsearch с попытками повторного подключения """
-    time.sleep(10)
-    return Elasticsearch([ES_HOST])
+    time.sleep(20)
+    return Elasticsearch([ELASTICSEARCH_HOST])
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
