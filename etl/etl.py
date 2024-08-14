@@ -96,7 +96,7 @@ def transform_data(records):
 @backoff.on_exception(backoff.expo, Exception, max_tries=10)
 def get_es_client():
     """ Подключение к Elasticsearch с попытками повторного подключения """
-    time.sleep(5)
+    time.sleep(0.1)
     return Elasticsearch(
         hosts=[{
             'host': ELASTICSEARCH_HOST,
@@ -123,15 +123,7 @@ def etl_process():
     """ Основной ETL процесс """
     pg_conn = get_pg_connection()
     es_client = get_es_client()
-    # es = Elasticsearch(
-    #     hosts=[{
-    #         'host': ELASTICSEARCH_HOST,
-    #         'port': ELASTICSEARCH_PORT,
-    #         'scheme': 'http'
-    #     }],
-    # )
-    # print(es.info())
-
+    print(es_client.info())
     storage = JsonFileStorage(STATE_FILE_PATH)
     state = State(storage)
 
@@ -141,8 +133,8 @@ def etl_process():
             records = extract_data(pg_conn, last_synced_id)
             if not records:
                 print("Нет новых записей для обработки. Ожидание...")
-                time.sleep(60)
-                continue
+                time.sleep(0.1)
+            #     continue
 
             transformed_data = list(transform_data(records))
             print("успешно трансормировали запись")
@@ -150,12 +142,13 @@ def etl_process():
 
             load_data_to_es(es_client, transformed_data)
             print("загрузились")
-            new_last_synced_id = records[-1][0]
-            print("и пытаемся установить статус")
-            state.set_state('last_synced_id', new_last_synced_id)
-
-
-            print(f"Обработано и загружено {len(records)} записей. Последний ID: {new_last_synced_id}")
+            print(records)
+            if len(records) != 0:
+                new_last_synced_id = records[-1][0]
+                print("устанавливаем новый статус, если были изменения")
+                state.set_state('last_synced_id', new_last_synced_id)
+                print(f"Обработано и загружено {len(records)} записей. Последний ID: {new_last_synced_id}")
+            print(f"Обработано и загружено {len(records)} записей")
 
     except Exception as e:
             print(f"Ошибка во время ETL процесса: {str(e)}")
