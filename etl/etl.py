@@ -10,14 +10,15 @@ load_dotenv()
 
 from state import JsonFileStorage, State
 
-# Конфигурация
-PG_HOST = os.environ.get('POSTGRES_HOST', 'theatre-db')
-PG_PORT = os.environ.get('POSTGRES_PORT', 5432)
+
+POSTGRES_HOST = os.environ.get('POSTGRES_HOST', 'theatre-db')
+POSTGRES_PORT = int(os.environ.get('POSTGRES_PORT', 5432))
 POSTGRES_USER = 'app'
 POSTGRES_PASSWORD = '123qwe'
 POSTGRES_DB = 'movies_database'
 
-ELASTICSEARCH_HOST = 'http://localhost:9200'
+ELASTICSEARCH_HOST = os.environ.get('ELASTICSEARCH_HOST', 'elasticsearch')
+ELASTICSEARCH_PORT = int(os.environ.get('ELASTICSEARCH_PORT'))
 INDEX_NAME = "movies"
 STATE_FILE_PATH = "sync_state.json"
 
@@ -25,8 +26,8 @@ STATE_FILE_PATH = "sync_state.json"
 def get_pg_connection():
     """ Подключение к PostgreSQL """
     return psycopg2.connect(
-        host=PG_HOST,
-        port=PG_PORT,
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
         user=POSTGRES_USER,
         password=POSTGRES_PASSWORD,
         database=POSTGRES_DB
@@ -95,20 +96,41 @@ def transform_data(records):
 @backoff.on_exception(backoff.expo, Exception, max_tries=10)
 def get_es_client():
     """ Подключение к Elasticsearch с попытками повторного подключения """
-    time.sleep(20)
-    return Elasticsearch([ELASTICSEARCH_HOST])
+    time.sleep(5)
+    return Elasticsearch(
+        hosts=[{
+            'host': ELASTICSEARCH_HOST,
+            'port': ELASTICSEARCH_PORT,
+            'scheme': 'http'
+        }],
+    )
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def load_data_to_es(es_client, transformed_data):
     """ Загрузка данных в Elasticsearch с использованием bulk API """
-    helpers.bulk(es_client, transformed_data)
+    print("в загрузку зашли")
+    print("es_client", es_client)
+    if len(transformed_data) != 0:
+        print("записи есть")
+    try:
+        helpers.bulk(es_client, transformed_data)
+    except Exception as e:
+        print(f"Oшибка: {e}")
 
 
 def etl_process():
     """ Основной ETL процесс """
     pg_conn = get_pg_connection()
     es_client = get_es_client()
+    # es = Elasticsearch(
+    #     hosts=[{
+    #         'host': ELASTICSEARCH_HOST,
+    #         'port': ELASTICSEARCH_PORT,
+    #         'scheme': 'http'
+    #     }],
+    # )
+    # print(es.info())
 
     storage = JsonFileStorage(STATE_FILE_PATH)
     state = State(storage)
@@ -123,14 +145,20 @@ def etl_process():
                 continue
 
             transformed_data = list(transform_data(records))
-            load_data_to_es(es_client, transformed_data)
+            print("успешно трансормировали запись")
+            print("и пытаемся загрузиться")
 
+            load_data_to_es(es_client, transformed_data)
+            print("загрузились")
             new_last_synced_id = records[-1][0]
+            print("и пытаемся установить статус")
             state.set_state('last_synced_id', new_last_synced_id)
+
+
             print(f"Обработано и загружено {len(records)} записей. Последний ID: {new_last_synced_id}")
 
     except Exception as e:
-        print(f"Ошибка во время ETL процесса: {str(e)}")
+            print(f"Ошибка во время ETL процесса: {str(e)}")
     finally:
         pg_conn.close()
 

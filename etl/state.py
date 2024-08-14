@@ -25,7 +25,8 @@ class JsonFileStorage(BaseStorage):
 
     def retrieve_state(self) -> Dict[str, Any]:
         """Получить состояние из JSON-файла."""
-        if not os.path.exists(self.file_path):
+        if not os.path.exists(self.file_path) or os.stat(self.file_path).st_size == 0:
+            print(f"Файл состояния {self.file_path} не существует или пуст.")
             return {}
         with open(self.file_path, 'r') as file:
             return json.load(file)
@@ -44,4 +45,6 @@ class State:
 
     def get_state(self, key: str) -> Any:
         """Получить состояние по определённому ключу."""
-        return self.state.get(key)
+        state_value = self.state.get(key)
+        print(f"Значение состояния для ключа '{key}': {state_value} (Тип: {type(state_value)})")
+        return state_value
