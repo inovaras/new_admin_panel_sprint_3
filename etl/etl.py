@@ -5,6 +5,8 @@ import psycopg2
 from elasticsearch import Elasticsearch, helpers
 import backoff
 from dotenv import load_dotenv
+import logging
+import sys
 
 load_dotenv()
 
@@ -109,21 +111,17 @@ def get_es_client():
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def load_data_to_es(es_client, transformed_data):
     """ Загрузка данных в Elasticsearch с использованием bulk API """
-    print("в загрузку зашли")
-    print("es_client", es_client)
-    if len(transformed_data) != 0:
-        print("записи есть")
     try:
         helpers.bulk(es_client, transformed_data)
     except Exception as e:
-        print(f"Oшибка: {e}")
+        logger.error(f"Oшибка: {e}")
 
 
 def etl_process():
     """ Основной ETL процесс """
     pg_conn = get_pg_connection()
     es_client = get_es_client()
-    print(es_client.info())
+    logger.debug(es_client.info())
     storage = JsonFileStorage(STATE_FILE_PATH)
     state = State(storage)
 
@@ -132,29 +130,30 @@ def etl_process():
             last_synced_id = state.get_state('last_synced_id') or 0
             records = extract_data(pg_conn, last_synced_id)
             if not records:
-                print("Нет новых записей для обработки. Ожидание...")
+                logger.debug("Нет новых записей для обработки. Ожидание...")
                 time.sleep(0.1)
-            #     continue
+                continue
 
             transformed_data = list(transform_data(records))
-            print("успешно трансормировали запись")
-            print("и пытаемся загрузиться")
-
             load_data_to_es(es_client, transformed_data)
-            print("загрузились")
-            print(records)
             if len(records) != 0:
                 new_last_synced_id = records[-1][0]
-                print("устанавливаем новый статус, если были изменения")
+                logger.debug("Устанавливаем новый статус")
                 state.set_state('last_synced_id', new_last_synced_id)
-                print(f"Обработано и загружено {len(records)} записей. Последний ID: {new_last_synced_id}")
-            print(f"Обработано и загружено {len(records)} записей")
+                logger.debug(f"Обработано и загружено {len(records)} записей. Последний ID: {new_last_synced_id}")
 
     except Exception as e:
-            print(f"Ошибка во время ETL процесса: {str(e)}")
+            logger.error(f"Ошибка во время ETL процесса: {str(e)}")
     finally:
         pg_conn.close()
 
 
 if __name__ == "__main__":
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(stream=sys.stdout)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
     etl_process()
