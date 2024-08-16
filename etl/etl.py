@@ -247,12 +247,9 @@ def create_index_with_mapping(es_client):
       }
      }
 
-    if es_client.indices.exists(index=INDEX_NAME):
-        es_client.indices.delete(index=INDEX_NAME)
-        logger.info(f"Индекс {INDEX_NAME} удален")
-
-    es_client.indices.create(index=INDEX_NAME, body=mapping)
-    logger.info(f"Индекс {INDEX_NAME} создан с маппингом")
+    if not es_client.indices.exists(index=INDEX_NAME):
+        es_client.indices.create(index=INDEX_NAME, body=mapping)
+        logger.info(f"Индекс {INDEX_NAME} создан с маппингом")
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
