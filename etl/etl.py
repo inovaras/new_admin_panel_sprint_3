@@ -51,15 +51,24 @@ def extract_data(conn, last_synced_time=None, batch_size=100):
         with conn.cursor() as cursor:
             query = """
                 SELECT
-                    fw.id,
-                    fw.title,
-                    fw.description,
-                    fw.rating,
-                    COALESCE(array_agg(DISTINCT g.name), ARRAY[]::TEXT[]) AS genres,
-                    COALESCE(array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'director'), ARRAY[]::TEXT[]) AS directors,
-                    COALESCE(array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'actor'), ARRAY[]::TEXT[]) AS actors,
-                    COALESCE(array_agg(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'writer'), ARRAY[]::TEXT[]) AS writers,
-                    fw.modified
+                   fw.id,
+                   fw.title,
+                   fw.description,
+                   fw.rating,
+                   fw.type,
+                   fw.created,
+                   fw.modified,
+                   COALESCE (
+                       json_agg(
+                           DISTINCT jsonb_build_object(
+                               'person_role', pfw.role,
+                               'person_id', p.id,
+                               'person_name', p.full_name
+                           )
+                       ) FILTER (WHERE p.id is not null),
+                       '[]'
+                   ) as persons,
+                   array_agg(DISTINCT g.name) as genres
                 FROM content.film_work fw
                 LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
                 LEFT JOIN content.person p ON p.id = pfw.person_id
@@ -78,7 +87,7 @@ def extract_data(conn, last_synced_time=None, batch_size=100):
 
 
 def transform_data(records):
-    """ Преобразование данных в формат для Elasticsearch """
+    """Преобразование данных в формат для Elasticsearch"""
     for record in records:
         try:
             yield {
@@ -86,17 +95,30 @@ def transform_data(records):
                 "_id": record[0],
                 "_source": {
                     "id": record[0],
+                    "imdb_rating": record[3],
+                    "genres": record[4],
                     "title": record[1],
                     "description": record[2],
-                    "imdb_rating": record[3],
-                    "genres": record[4] if isinstance(record[4], list) else [],
-                    "directors_names": record[5] if isinstance(record[5], list) else [],
-                    "directors": [{"id": str(i+1), "name": director} for i, director in enumerate(record[5])] if isinstance(record[5], list) else [],
-                    "actors": [{"id": str(i+1), "name": actor} for i, actor in enumerate(record[6])] if isinstance(record[6], list) else [],
-                    "writers_names": record[7] if isinstance(record[7], list) else [],
-                    "writers": [{"id": str(i+1), "name": writer} for i, writer in enumerate(record[7])] if isinstance(record[7], list) else [],
+                    "directors_names": [d['person_name'] for d in record[7] if d['person_role'] == 'director'],
+                    "actors_names":  [a['person_name'] for a in record[7] if a['person_role'] == 'actor'],
+                    "writers_names":  [w['person_name'] for w in record[7] if w['person_role'] == 'writer'],
+                    "directors": [{"id": d['person_id'], "name": d['person_name']} for d in record[7] if d['person_role'] == 'director'] ,
+                    "actors": [{"id": a['person_id'], "name": a['person_name']} for a in record[7] if a['person_role'] == 'actor'],
+                    "writers": [{"id": w['person_id'], "name": w['person_name']} for w in record[7] if w['person_role'] == 'writer'] ,
                 }
             }
+            print("id", record[0])
+            print("imdb_rating", record[3],)
+            print("genres", record[4])
+            print("title", record[1],)
+            print("description", record[2],)
+            print("directors_names", [d['person_name'] for d in record[7] if d['person_role'] == 'director'])
+            print("actors_names",  [a['person_name'] for a in record[7] if a['person_role'] == 'actor'])
+            print("writers_names",  [w['person_name'] for w in record[7] if w['person_role'] == 'writer'])
+            print("directors", [{"id": d['person_id'], "name": d['person_name']} for d in record[7] if d['person_role'] == 'director'] )
+            print("actors", [{"id": a['person_id'], "name": a['person_name']} for a in record[7] if a['person_role'] == 'actor'])
+            print("writers", [{"id": w['person_id'], "name": w['person_name']} for w in record[7] if w['person_role'] == 'writer'] )
+
         except IndexError as e:
             logger.error(f"Ошибка обработки записи: {record} - {str(e)}")
 
@@ -287,7 +309,8 @@ def etl_process():
             transformed_data = list(transform_data(records))
             load_data_to_es(es_client, transformed_data)
 
-            new_last_synced_time = records[-1][8].isoformat()
+            new_last_synced_time = records[-1][6].isoformat()
+            print(new_last_synced_time)
             state.set_state('last_synced_time', new_last_synced_time)
             logger.debug(f"Обработано и загружено {len(records)} записей. Последняя дата: {new_last_synced_time}")
 
