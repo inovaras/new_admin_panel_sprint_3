@@ -1,4 +1,3 @@
-from datetime import datetime
 import logging
 import os
 import sys
@@ -9,21 +8,19 @@ import psycopg2
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch, helpers
 
-load_dotenv()
-
 from state import JsonFileStorage, State
 
 
-POSTGRES_HOST = '172.21.0.2'
-# POSTGRES_HOST = 'theatre-db'
-POSTGRES_PORT = 5432
-POSTGRES_USER = 'app'
-POSTGRES_PASSWORD = '123qwe'
-POSTGRES_DB = 'movies_database'
+load_dotenv()
 
-ELASTICSEARCH_HOST = '172.22.0.2'
-# ELASTICSEARCH_HOST = 'elasticsearch'
-ELASTICSEARCH_PORT = 9200
+POSTGRES_HOST = os.getenv('POSTGRES_HOST')
+POSTGRES_PORT = int(os.getenv('POSTGRES_PORT'))
+POSTGRES_USER = os.getenv('POSTGRES_USER')
+POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD')
+POSTGRES_DB = os.getenv('POSTGRES_DB')
+
+ELASTICSEARCH_HOST = os.getenv('ELASTICSEARCH_HOST')
+ELASTICSEARCH_PORT = int(os.getenv('ELASTICSEARCH_PORT'))
 INDEX_NAME = "movies"
 STATE_FILE_PATH = "sync_state.json"
 
@@ -99,13 +96,37 @@ def transform_data(records):
                     "genres": record[8],
                     "title": record[1],
                     "description": record[2],
-                    "directors_names": [d['person_name'] for d in record[7] if d['person_role'] == 'director'],
-                    "actors_names":  [a['person_name'] for a in record[7] if a['person_role'] == 'actor'],
-                    "writers_names":  [w['person_name'] for w in record[7] if w['person_role'] == 'writer'],
-                    "directors": [{"id": d['person_id'], "name": d['person_name']} for d in record[7] if d['person_role'] == 'director'] ,
-                    "actors": [{"id": a['person_id'], "name": a['person_name']} for a in record[7] if a['person_role'] == 'actor'],
-                    "writers": [{"id": w['person_id'], "name": w['person_name']} for w in record[7] if w['person_role'] == 'writer'] ,
-                }
+                    "directors_names": [
+                        d["person_name"]
+                        for d in record[7]
+                        if d["person_role"] == "director"
+                    ],
+                    "actors_names": [
+                        a["person_name"]
+                        for a in record[7]
+                        if a["person_role"] == "actor"
+                    ],
+                    "writers_names": [
+                        w["person_name"]
+                        for w in record[7]
+                        if w["person_role"] == "writer"
+                    ],
+                    "directors": [
+                        {"id": d["person_id"], "name": d["person_name"]}
+                        for d in record[7]
+                        if d["person_role"] == "director"
+                    ],
+                    "actors": [
+                        {"id": a["person_id"], "name": a["person_name"]}
+                        for a in record[7]
+                        if a["person_role"] == "actor"
+                    ],
+                    "writers": [
+                        {"id": w["person_id"], "name": w["person_name"]}
+                        for w in record[7]
+                        if w["person_role"] == "writer"
+                    ],
+                },
             }
         except IndexError as e:
             logger.error(f"Ошибка обработки записи: {record} - {str(e)}")
@@ -273,10 +294,8 @@ def etl_process():
 
     storage = JsonFileStorage(STATE_FILE_PATH)
     state = State(storage)
-
     try:
         sleep_time = 5
-
         while True:
             last_synced_time = state.get_state('last_synced_time')
             if last_synced_time is None:
@@ -295,7 +314,6 @@ def etl_process():
             load_data_to_es(es_client, transformed_data)
 
             new_last_synced_time = records[-1][6].isoformat()
-            print(new_last_synced_time)
             state.set_state('last_synced_time', new_last_synced_time)
             logger.debug(f"Обработано и загружено {len(records)} записей. Последняя дата: {new_last_synced_time}")
 
