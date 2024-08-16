@@ -14,15 +14,15 @@ load_dotenv()
 from state import JsonFileStorage, State
 
 
-# POSTGRES_HOST = '172.21.0.2'
-POSTGRES_HOST = 'theatre-db'
+POSTGRES_HOST = '172.21.0.2'
+# POSTGRES_HOST = 'theatre-db'
 POSTGRES_PORT = 5432
 POSTGRES_USER = 'app'
 POSTGRES_PASSWORD = '123qwe'
 POSTGRES_DB = 'movies_database'
 
-# ELASTICSEARCH_HOST = '172.22.0.2'
-ELASTICSEARCH_HOST = 'elasticsearch'
+ELASTICSEARCH_HOST = '172.22.0.2'
+# ELASTICSEARCH_HOST = 'elasticsearch'
 ELASTICSEARCH_PORT = 9200
 INDEX_NAME = "movies"
 STATE_FILE_PATH = "sync_state.json"
@@ -91,16 +91,17 @@ def transform_data(records):
                     "imdb_rating": record[3],
                     "genres": record[4] if isinstance(record[4], list) else [],
                     "directors_names": record[5] if isinstance(record[5], list) else [],
-                    "actors": [{"name": actor} for actor in record[6]] if isinstance(record[6], list) else [],
+                    "directors": [{"id": str(i+1), "name": director} for i, director in enumerate(record[5])] if isinstance(record[5], list) else [],
+                    "actors": [{"id": str(i+1), "name": actor} for i, actor in enumerate(record[6])] if isinstance(record[6], list) else [],
                     "writers_names": record[7] if isinstance(record[7], list) else [],
-                    "modified": record[8].isoformat() if isinstance(record[8], datetime) else record[8]
+                    "writers": [{"id": str(i+1), "name": writer} for i, writer in enumerate(record[7])] if isinstance(record[7], list) else [],
                 }
             }
         except IndexError as e:
             logger.error(f"Ошибка обработки записи: {record} - {str(e)}")
 
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=10)
+@backoff.on_exception(backoff.expo, Exception, max_tries=10, jitter=backoff.full_jitter)
 def get_es_client():
     """Подключение к Elasticsearch с попытками повторного подключения."""
     time.sleep(0.1)
@@ -116,25 +117,125 @@ def get_es_client():
 def create_index_with_mapping(es_client):
     """Создание индекса с маппингом в Elasticsearch."""
     mapping = {
-        "mappings": {
-            "properties": {
-                "id": {"type": "keyword"},
-                "title": {"type": "text"},
-                "description": {"type": "text"},
-                "imdb_rating": {"type": "float"},
-                "genres": {"type": "keyword"},
-                "directors_names": {"type": "text"},
-                "actors": {
-                    "type": "nested",
-                    "properties": {
-                        "name": {"type": "text"}
-                    }
-                },
-                "writers_names": {"type": "text"},
-                "modified": {"type": "date"}
+      "settings": {
+        "refresh_interval": "1s",
+        "analysis": {
+          "filter": {
+            "english_stop": {
+              "type":       "stop",
+              "stopwords":  "_english_"
+            },
+            "english_stemmer": {
+              "type": "stemmer",
+              "language": "english"
+            },
+            "english_possessive_stemmer": {
+              "type": "stemmer",
+              "language": "possessive_english"
+            },
+            "russian_stop": {
+              "type":       "stop",
+              "stopwords":  "_russian_"
+            },
+            "russian_stemmer": {
+              "type": "stemmer",
+              "language": "russian"
             }
+          },
+          "analyzer": {
+            "ru_en": {
+              "tokenizer": "standard",
+              "filter": [
+                "lowercase",
+                "english_stop",
+                "english_stemmer",
+                "english_possessive_stemmer",
+                "russian_stop",
+                "russian_stemmer"
+              ]
+            }
+          }
         }
-    }
+      },
+      "mappings": {
+        "dynamic": "strict",
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "imdb_rating": {
+            "type": "float"
+          },
+          "genres": {
+            "type": "keyword"
+          },
+          "title": {
+            "type": "text",
+            "analyzer": "ru_en",
+            "fields": {
+              "raw": {
+                "type":  "keyword"
+              }
+            }
+          },
+          "description": {
+            "type": "text",
+            "analyzer": "ru_en"
+          },
+          "directors_names": {
+            "type": "text",
+            "analyzer": "ru_en"
+          },
+          "actors_names": {
+            "type": "text",
+            "analyzer": "ru_en"
+          },
+          "writers_names": {
+            "type": "text",
+            "analyzer": "ru_en"
+          },
+          "directors": {
+            "type": "nested",
+            "dynamic": "strict",
+            "properties": {
+              "id": {
+                "type": "keyword"
+              },
+              "name": {
+                "type": "text",
+                "analyzer": "ru_en"
+              }
+            }
+          },
+          "actors": {
+            "type": "nested",
+            "dynamic": "strict",
+            "properties": {
+              "id": {
+                "type": "keyword"
+              },
+              "name": {
+                "type": "text",
+                "analyzer": "ru_en"
+              }
+            }
+          },
+          "writers": {
+            "type": "nested",
+            "dynamic": "strict",
+            "properties": {
+              "id": {
+                "type": "keyword"
+              },
+              "name": {
+                "type": "text",
+                "analyzer": "ru_en"
+              }
+            }
+          }
+        }
+      }
+     }
 
     if es_client.indices.exists(index=INDEX_NAME):
         es_client.indices.delete(index=INDEX_NAME)
@@ -171,8 +272,6 @@ def etl_process():
 
         while True:
             last_synced_time = state.get_state('last_synced_time')
-
-            # Обработка случая, если last_synced_time пустой
             if last_synced_time is None:
                 last_synced_time = '1970-01-01T00:00:00'
             elif not isinstance(last_synced_time, str):
