@@ -96,7 +96,7 @@ def transform_data(records):
                 "_source": {
                     "id": record[0],
                     "imdb_rating": record[3],
-                    "genres": record[4],
+                    "genres": record[8],
                     "title": record[1],
                     "description": record[2],
                     "directors_names": [d['person_name'] for d in record[7] if d['person_role'] == 'director'],
@@ -107,18 +107,6 @@ def transform_data(records):
                     "writers": [{"id": w['person_id'], "name": w['person_name']} for w in record[7] if w['person_role'] == 'writer'] ,
                 }
             }
-            print("id", record[0])
-            print("imdb_rating", record[3],)
-            print("genres", record[4])
-            print("title", record[1],)
-            print("description", record[2],)
-            print("directors_names", [d['person_name'] for d in record[7] if d['person_role'] == 'director'])
-            print("actors_names",  [a['person_name'] for a in record[7] if a['person_role'] == 'actor'])
-            print("writers_names",  [w['person_name'] for w in record[7] if w['person_role'] == 'writer'])
-            print("directors", [{"id": d['person_id'], "name": d['person_name']} for d in record[7] if d['person_role'] == 'director'] )
-            print("actors", [{"id": a['person_id'], "name": a['person_name']} for a in record[7] if a['person_role'] == 'actor'])
-            print("writers", [{"id": w['person_id'], "name": w['person_name']} for w in record[7] if w['person_role'] == 'writer'] )
-
         except IndexError as e:
             logger.error(f"Ошибка обработки записи: {record} - {str(e)}")
 
