@@ -44,8 +44,6 @@ services:
     command: >
       bash -c "
         ./wait-for-it.sh elasticsearch:9200 --
-        python3 -m venv venv &&
-        . venv/bin/activate &&
         pip install --upgrade pip &&
         pip install -r requirements.txt &&
         python etl.py
