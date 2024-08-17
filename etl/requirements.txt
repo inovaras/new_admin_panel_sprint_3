@@ -8,3 +8,4 @@ python-dotenv==1.0.1
 urllib3==2.2.2
 black==24.4.2
 isort==5.13.2
+pydantic-settings==2.4.0

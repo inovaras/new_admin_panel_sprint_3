@@ -2,3 +2,6 @@
 venv
 etl/.env
 __pycache__/
+etl/sync_state.json
+etl/movies
+

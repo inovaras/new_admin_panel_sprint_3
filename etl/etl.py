@@ -1,60 +1,70 @@
-import logging
-import os
-import sys
+from datetime import datetime, timezone
 import time
+from typing import Generator, List, Optional
 
 import backoff
 import psycopg2
-from dotenv import load_dotenv
+from psycopg2.extensions import connection as PGConnection
+from psycopg2.extras import DictCursor
+from pydantic_settings import BaseSettings
 from elasticsearch import Elasticsearch, helpers
 
-from state import JsonFileStorage, State
+from state import JsonFileStorage, State, logger
 
 
-load_dotenv()
+class Settings(BaseSettings):
+    postgres_host: str
+    postgres_port: int
+    postgres_user: str
+    postgres_password: str
+    postgres_db: str
 
-POSTGRES_HOST = os.getenv('POSTGRES_HOST')
-POSTGRES_PORT = int(os.getenv('POSTGRES_PORT'))
-POSTGRES_USER = os.getenv('POSTGRES_USER')
-POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD')
-POSTGRES_DB = os.getenv('POSTGRES_DB')
+    elasticsearch_host: str
+    elasticsearch_port: int
 
-ELASTICSEARCH_HOST = os.getenv('ELASTICSEARCH_HOST')
-ELASTICSEARCH_PORT = int(os.getenv('ELASTICSEARCH_PORT'))
-INDEX_NAME = "movies"
-STATE_FILE_PATH = "sync_state.json"
+    index_name: str = "movies"
+    state_file_path: str = "sync_state.json"
+    default_sync_time: str = datetime(1970, 1, 1, tzinfo=timezone.utc).isoformat()
+    default_sleep_time: int = 5
+
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
 
 
-def get_pg_connection():
+settings = Settings()
+
+
+def get_pg_connection() -> PGConnection:
     """Подключение к PostgreSQL."""
     return psycopg2.connect(
-        host=POSTGRES_HOST,
-        port=POSTGRES_PORT,
-        user=POSTGRES_USER,
-        password=POSTGRES_PASSWORD,
-        database=POSTGRES_DB
+        host=settings.postgres_host,
+        port=settings.postgres_port,
+        user=settings.postgres_user,
+        password=settings.postgres_password,
+        database=settings.postgres_db
     )
 
 
-def get_pg_connection_with_retry():
+def get_pg_connection_with_retry() -> PGConnection:
     """Подключение к PostgreSQL с попытками повторного подключения."""
     return backoff.on_exception(backoff.expo, psycopg2.OperationalError, max_tries=5)(get_pg_connection)()
 
 
-def extract_data(conn, last_synced_time=None, batch_size=100):
-    """ Извлечение данных из PostgreSQL """
+def extract_data(conn: PGConnection, last_synced_time: Optional[str] = None, batch_size: int = 100) -> List[dict]:
+    """Извлечение данных из PostgreSQL."""
     logger.debug(f"Последняя дата обновления: {last_synced_time}")
     try:
-        with conn.cursor() as cursor:
+        with conn.cursor(cursor_factory=DictCursor) as cursor:
             query = """
                 SELECT
-                   fw.id,
-                   fw.title,
-                   fw.description,
-                   fw.rating,
-                   fw.type,
-                   fw.created,
-                   fw.modified,
+                   fw.id AS id,
+                   fw.title AS title,
+                   fw.description AS description,
+                   fw.rating AS imdb_rating,
+                   fw.type AS type,
+                   fw.created AS created,
+                   fw.modified AS modified,
                    COALESCE (
                        json_agg(
                            DISTINCT jsonb_build_object(
@@ -83,48 +93,48 @@ def extract_data(conn, last_synced_time=None, batch_size=100):
         raise
 
 
-def transform_data(records):
-    """Преобразование данных в формат для Elasticsearch"""
+def transform_data(records: List[dict]) -> Generator[dict, None, None]:
+    """Преобразование данных в формат для Elasticsearch."""
     for record in records:
         try:
             yield {
-                "_index": INDEX_NAME,
-                "_id": record[0],
+                "_index": settings.index_name,
+                "_id": record["id"],
                 "_source": {
-                    "id": record[0],
-                    "imdb_rating": record[3],
-                    "genres": record[8],
-                    "title": record[1],
-                    "description": record[2],
+                    "id": record["id"],
+                    "imdb_rating": record["imdb_rating"],
+                    "genres": record["genres"],
+                    "title": record["title"],
+                    "description": record["description"],
                     "directors_names": [
-                        d["person_name"]
-                        for d in record[7]
-                        if d["person_role"] == "director"
+                        person["person_name"]
+                        for person in record["persons"]
+                        if person["person_role"] == "director"
                     ],
                     "actors_names": [
-                        a["person_name"]
-                        for a in record[7]
-                        if a["person_role"] == "actor"
+                        person["person_name"]
+                        for person in record["persons"]
+                        if person["person_role"] == "actor"
                     ],
                     "writers_names": [
-                        w["person_name"]
-                        for w in record[7]
-                        if w["person_role"] == "writer"
+                        person["person_name"]
+                        for person in record["persons"]
+                        if person["person_role"] == "writer"
                     ],
                     "directors": [
-                        {"id": d["person_id"], "name": d["person_name"]}
-                        for d in record[7]
-                        if d["person_role"] == "director"
+                        {"id": person["person_id"], "name": person["person_name"]}
+                        for person in record["persons"]
+                        if person["person_role"] == "director"
                     ],
                     "actors": [
-                        {"id": a["person_id"], "name": a["person_name"]}
-                        for a in record[7]
-                        if a["person_role"] == "actor"
+                        {"id": person["person_id"], "name": person["person_name"]}
+                        for person in record["persons"]
+                        if person["person_role"] == "actor"
                     ],
                     "writers": [
-                        {"id": w["person_id"], "name": w["person_name"]}
-                        for w in record[7]
-                        if w["person_role"] == "writer"
+                        {"id": person["person_id"], "name": person["person_name"]}
+                        for person in record[7]
+                        if person["person_role"] == "writer"
                     ],
                 },
             }
@@ -133,19 +143,19 @@ def transform_data(records):
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=10, jitter=backoff.full_jitter)
-def get_es_client():
+def get_es_client() -> Elasticsearch:
     """Подключение к Elasticsearch с попытками повторного подключения."""
     time.sleep(0.1)
     return Elasticsearch(
         hosts=[{
-            'host': ELASTICSEARCH_HOST,
-            'port': ELASTICSEARCH_PORT,
+            'host': settings.elasticsearch_host,
+            'port': settings.elasticsearch_port,
             'scheme': 'http'
         }],
     )
 
 
-def create_index_with_mapping(es_client):
+def create_index_with_mapping(es_client: Elasticsearch) -> None:
     """Создание индекса с маппингом в Elasticsearch."""
     mapping = {
       "settings": {
@@ -268,13 +278,13 @@ def create_index_with_mapping(es_client):
       }
      }
 
-    if not es_client.indices.exists(index=INDEX_NAME):
-        es_client.indices.create(index=INDEX_NAME, body=mapping)
-        logger.info(f"Индекс {INDEX_NAME} создан с маппингом")
+    if not es_client.indices.exists(index=settings.index_name):
+        es_client.indices.create(index=settings.index_name, body=mapping)
+        logger.info(f"Индекс {settings.index_name} создан с маппингом")
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def load_data_to_es(es_client, transformed_data):
+def load_data_to_es(es_client: Elasticsearch, transformed_data: List[dict]) -> None:
     """ Загрузка данных в Elasticsearch с использованием bulk API """
     try:
         success, failed = helpers.bulk(es_client, transformed_data, raise_on_error=False)
@@ -285,23 +295,21 @@ def load_data_to_es(es_client, transformed_data):
         logger.error(f"Ошибка: {e}")
 
 
-def etl_process():
+def etl_process() -> None:
     """ Основной ETL процесс """
     pg_conn = get_pg_connection_with_retry()
     es_client = get_es_client()
 
     create_index_with_mapping(es_client)
 
-    storage = JsonFileStorage(STATE_FILE_PATH)
+    storage = JsonFileStorage(settings.index_name)
     state = State(storage)
     try:
-        sleep_time = 5
+        sleep_time = settings.default_sleep_time
         while True:
             last_synced_time = state.get_state('last_synced_time')
-            if last_synced_time is None:
-                last_synced_time = '1970-01-01T00:00:00'
-            elif not isinstance(last_synced_time, str):
-                last_synced_time = '1970-01-01T00:00:00'
+            if last_synced_time is None or not isinstance(last_synced_time, str):
+                last_synced_time = settings.default_sync_time
 
             records = extract_data(pg_conn, last_synced_time)
             if not records:
@@ -309,7 +317,7 @@ def etl_process():
                 time.sleep(sleep_time)
                 continue
 
-            sleep_time = 5
+            sleep_time = settings.default_sleep_time
             transformed_data = list(transform_data(records))
             load_data_to_es(es_client, transformed_data)
 
@@ -324,11 +332,4 @@ def etl_process():
 
 
 if __name__ == "__main__":
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler(stream=sys.stdout)
-    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
     etl_process()

@@ -1,7 +1,17 @@
 import json
+import logging
 import os
+import sys
 from threading import Lock
 from typing import Any, Dict
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler(stream=sys.stdout)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 class BaseStorage:
@@ -29,14 +39,14 @@ class JsonFileStorage(BaseStorage):
     def retrieve_state(self) -> Dict[str, Any]:
         """Получить состояние из JSON-файла."""
         if not os.path.exists(self.file_path) or os.stat(self.file_path).st_size == 0:
-            print(f"Файл состояния {self.file_path} не существует или пуст.")
+            logger.error(f"Файл состояния {self.file_path} не существует или пуст.")
             return {}
         with self._lock:
             try:
                 with open(self.file_path, 'r') as file:
                     return json.load(file)
             except json.JSONDecodeError as e:
-                print(f"Ошибка декодирования JSON в файле {self.file_path}: {e}")
+                logger.error(f"Ошибка декодирования JSON в файле {self.file_path}: {e}")
                 return {}
 
 
@@ -54,5 +64,5 @@ class State:
     def get_state(self, key: str) -> Any:
         """Получить состояние по определённому ключу."""
         state_value = self.state.get(key)
-        print(f"Значение состояния для ключа '{key}': {state_value} (Тип: {type(state_value)})")
+        logger.debug(f"Значение состояния для ключа '{key}': {state_value} (Тип: {type(state_value)})")
         return state_value
