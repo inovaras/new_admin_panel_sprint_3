@@ -293,21 +293,31 @@ def create_index_with_mapping(es_client: Elasticsearch) -> None:
         es_client.indices.create(index=settings.index_name, body=mapping)
         logger.info(f"Индекс {settings.index_name} создан с маппингом")
     else:
+        # Получаем текущий маппинг
         current_mapping = es_client.indices.get_mapping(index=settings.index_name)
-        if current_mapping[settings.index_name] == mapping:
-            logger.info(f"Индекс {settings.index_name} уже существует и имеет тот же маппинг")
-        else:
-            logger.info(f"Индекс {settings.index_name} существует, но маппинг отличается.")
 
+        # Извлекаем релевантные части для сравнения
+        print(current_mapping)
+        print(current_mapping[settings.index_name])
+        current_mapping_mappings = current_mapping[settings.index_name]['mappings']
+
+        # Сравниваем только настройки и маппинг
+        if current_mapping_mappings == mapping['mappings']:
+            logger.info(f"Индекс {settings.index_name} уже существует и имеет тот же маппинг.")
+        else:
+            logger.warning(
+                f"Индекс {settings.index_name} существует, но маппинги отличаются.")
+
+            # Удаление старого индекса
             es_client.indices.delete(index=settings.index_name)
             logger.info(f"Старый индекс {settings.index_name} удален")
 
             # Создание нового индекса с обновленным маппингом
             es_client.indices.create(index=settings.index_name, body=mapping)
             logger.info(f"Новый индекс {settings.index_name} создан с обновленным маппингом")
-
-
-
+            new_mapping = es_client.indices.get_mapping(index=settings.index_name)
+            print(new_mapping)
+            print(new_mapping[settings.index_name])
 
 
 def load_data_to_es(es_client: Elasticsearch, transformed_data: List[dict]) -> None:
