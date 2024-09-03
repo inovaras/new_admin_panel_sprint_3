@@ -1,9 +1,11 @@
+import abc
 import json
 import logging
-import os
 import sys
-from threading import Lock
+import os
 from typing import Any, Dict
+from redis.client import Redis
+from redis.exceptions import BusyLoadingError, ConnectionError, TimeoutError
 
 
 logger = logging.getLogger(__name__)
@@ -13,56 +15,108 @@ formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+class BaseStorage(abc.ABC):
+    """Абстрактное хранилище состояния.
 
-class BaseStorage:
-    """Абстрактное хранилище состояния."""
+    Позволяет сохранять и получать состояние.
+    Способ хранения состояния может варьироваться в зависимости
+    от итоговой реализации. Например, можно хранить информацию
+    в базе данных или в распределённом файловом хранилище.
+    """
+
+    @abc.abstractmethod
     def save_state(self, state: Dict[str, Any]) -> None:
         """Сохранить состояние в хранилище."""
-        raise NotImplementedError
+
+    @abc.abstractmethod
+    def retrieve_state(self) -> Dict[str, Any]:
+        """Получить состояние из хранилища."""
+
+
+class RedisStorage(BaseStorage):
+
+    def __init__(self, redis_adapter: Redis):
+        self.redis_adapter = redis_adapter
+        self.key = None
+
+    def save_state(self, state: Dict[str, Any]) -> None:
+        """Сохранить состояние в хранилище."""
+        self.redis_adapter.hset(name="state", mapping=state)
 
     def retrieve_state(self) -> Dict[str, Any]:
         """Получить состояние из хранилища."""
-        raise NotImplementedError
+        state = self.redis_adapter.hgetall(name="state")
+        logger.debug(state)
+        return state
 
 
 class JsonFileStorage(BaseStorage):
+    """Реализация хранилища, использующего локальный файл.
+
+    Формат хранения: JSON
+    """
+
     def __init__(self, file_path: str) -> None:
         self.file_path = file_path
-        self._lock = Lock()
 
     def save_state(self, state: Dict[str, Any]) -> None:
-        """Сохранить состояние в JSON-файл."""
-        with self._lock:
-            with open(self.file_path, 'w') as file:
-                json.dump(state, file)
+        """Сохранить состояние в хранилище."""
+        data = self.retrieve_state()
+
+        data.update(state)
+        with open(self.file_path, mode="w") as file:
+            json.dump(data, fp=file)
 
     def retrieve_state(self) -> Dict[str, Any]:
-        """Получить состояние из JSON-файла."""
-        if not os.path.exists(self.file_path) or os.stat(self.file_path).st_size == 0:
-            logger.error(f"Файл состояния {self.file_path} не существует или пуст.")
+        """Получить состояние из хранилища."""
+        if not os.path.exists(self.file_path):
+            with open(self.file_path, mode="w") as f:
+                json.dump({}, f)
+
             return {}
-        with self._lock:
-            try:
-                with open(self.file_path, 'r') as file:
-                    return json.load(file)
-            except json.JSONDecodeError as e:
-                logger.error(f"Ошибка декодирования JSON в файле {self.file_path}: {e}")
-                return {}
+        else:
+            with open(self.file_path) as file:
+                data: dict = json.load(file)
+
+            return data
 
 
 class State:
-    """Класс для работы с состоянием."""
+    """Класс для работы с состояниями."""
+
     def __init__(self, storage: BaseStorage) -> None:
         self.storage = storage
-        self.state = self.storage.retrieve_state()
 
     def set_state(self, key: str, value: Any) -> None:
         """Установить состояние для определённого ключа."""
-        self.state[key] = value
-        self.storage.save_state(self.state)
+        self.storage.save_state(state={key: value})
 
     def get_state(self, key: str) -> Any:
         """Получить состояние по определённому ключу."""
-        state_value = self.state.get(key)
-        logger.debug(f"Значение состояния для ключа '{key}': {state_value} (Тип: {type(state_value)})")
-        return state_value
+        state = self.storage.retrieve_state()
+        if len(state) == 0:
+            return None
+
+        state = state[key]
+        return state
+
+
+if __name__ == "__main__":
+    # storage = JsonFileStorage(file_path="storage.json")
+    # state = State(storage=storage)
+    # my_state = state.get_state(key="mike")
+    # state.set_state(key="bob", value=555)
+
+    # Run 3 retries with exponential backoff strategy
+    storage = RedisStorage(
+        redis_adapter=Redis(
+            host="172.18.0.3",
+            decode_responses=True,
+            # retry=RedisStorage.retry,
+            retry_on_error=[BusyLoadingError, ConnectionError, TimeoutError],
+        )
+    )
+    state = State(storage=storage)
+    state.set_state(key="bob", value=555)
+    my_state = state.get_state(key="bob")
+    print(my_state)

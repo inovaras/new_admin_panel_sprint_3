@@ -1,0 +1,5 @@
+etl/.env
+venv
+.git
+.env.example
+etl/movies

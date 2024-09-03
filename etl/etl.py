@@ -1,15 +1,18 @@
-from datetime import datetime, timezone
 import time
+from datetime import datetime, timezone
 from typing import Generator, List, Optional
 
 import backoff
 import psycopg2
+import redis
+import elasticsearch
+from elasticsearch import Elasticsearch, helpers
 from psycopg2.extensions import connection as PGConnection
 from psycopg2.extras import DictCursor
 from pydantic_settings import BaseSettings
-from elasticsearch import Elasticsearch, helpers
+from redis.client import Redis
 
-from state import JsonFileStorage, State, logger
+from state import State, logger, RedisStorage
 
 
 class Settings(BaseSettings):
@@ -21,6 +24,9 @@ class Settings(BaseSettings):
 
     elasticsearch_host: str
     elasticsearch_port: int
+
+    redis_host: str
+    redis_port: int
 
     index_name: str = "movies"
     state_file_path: str = "sync_state.json"
@@ -34,7 +40,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-
+# TODO add backoff decorator
 def get_pg_connection() -> PGConnection:
     """Подключение к PostgreSQL."""
     return psycopg2.connect(
@@ -48,7 +54,7 @@ def get_pg_connection() -> PGConnection:
 
 def get_pg_connection_with_retry() -> PGConnection:
     """Подключение к PostgreSQL с попытками повторного подключения."""
-    return backoff.on_exception(backoff.expo, psycopg2.OperationalError, max_tries=5)(get_pg_connection)()
+    return backoff.on_exception(backoff.expo, psycopg2.OperationalError, jitter=backoff.full_jitter, max_value=5)(get_pg_connection)()
 
 
 def extract_data(conn: PGConnection, last_synced_time: Optional[str] = None, batch_size: int = 100) -> List[dict]:
@@ -141,8 +147,13 @@ def transform_data(records: List[dict]) -> Generator[dict, None, None]:
         except IndexError as e:
             logger.error(f"Ошибка обработки записи: {record} - {str(e)}")
 
-
-@backoff.on_exception(backoff.expo, Exception, max_tries=10, jitter=backoff.full_jitter)
+# TODO add handler logs
+@backoff.on_exception(
+    wait_gen=backoff.expo,
+    exception=(elasticsearch.ConnectionError, elasticsearch.ConnectionTimeout),
+    jitter=backoff.full_jitter,
+    max_value=5,
+)
 def get_es_client() -> Elasticsearch:
     """Подключение к Elasticsearch с попытками повторного подключения."""
     time.sleep(0.1)
@@ -158,132 +169,147 @@ def get_es_client() -> Elasticsearch:
 def create_index_with_mapping(es_client: Elasticsearch) -> None:
     """Создание индекса с маппингом в Elasticsearch."""
     mapping = {
-      "settings": {
-        "refresh_interval": "1s",
-        "analysis": {
-          "filter": {
-            "english_stop": {
-              "type":       "stop",
-              "stopwords":  "_english_"
-            },
-            "english_stemmer": {
-              "type": "stemmer",
-              "language": "english"
-            },
-            "english_possessive_stemmer": {
-              "type": "stemmer",
-              "language": "possessive_english"
-            },
-            "russian_stop": {
-              "type":       "stop",
-              "stopwords":  "_russian_"
-            },
-            "russian_stemmer": {
-              "type": "stemmer",
-              "language": "russian"
+        "settings": {
+            "refresh_interval": "1s",
+            "analysis": {
+                "filter": {
+                    "english_stop": {
+                        "type": "stop",
+                        "stopwords": "_english_"
+                    },
+                    "english_stemmer": {
+                        "type": "stemmer",
+                        "language": "english"
+                    },
+                    "english_possessive_stemmer": {
+                        "type": "stemmer",
+                        "language": "possessive_english"
+                    },
+                    "russian_stop": {
+                        "type": "stop",
+                        "stopwords": "_russian_"
+                    },
+                    "russian_stemmer": {
+                        "type": "stemmer",
+                        "language": "russian"
+                    }
+                },
+                "analyzer": {
+                    "ru_en": {
+                        "tokenizer": "standard",
+                        "filter": [
+                            "lowercase",
+                            "english_stop",
+                            "english_stemmer",
+                            "english_possessive_stemmer",
+                            "russian_stop",
+                            "russian_stemmer"
+                        ]
+                    }
+                }
             }
-          },
-          "analyzer": {
-            "ru_en": {
-              "tokenizer": "standard",
-              "filter": [
-                "lowercase",
-                "english_stop",
-                "english_stemmer",
-                "english_possessive_stemmer",
-                "russian_stop",
-                "russian_stemmer"
-              ]
+        },
+        "mappings": {
+            "dynamic": "strict",
+            "properties": {
+                "id": {
+                    "type": "keyword"
+                },
+                "imdb_rating": {
+                    "type": "float"
+                },
+                "genres": {
+                    "type": "text"
+                },
+                "title": {
+                    "type": "text",
+                    "analyzer": "ru_en",
+                    "fields": {
+                        "raw": {
+                            "type": "keyword"
+                        }
+                    }
+                },
+                "description": {
+                    "type": "text",
+                    "analyzer": "ru_en"
+                },
+                "directors_names": {
+                    "type": "text",
+                    "analyzer": "ru_en"
+                },
+                "actors_names": {
+                    "type": "text",
+                    "analyzer": "ru_en"
+                },
+                "writers_names": {
+                    "type": "text",
+                    "analyzer": "ru_en"
+                },
+                "directors": {
+                    "type": "nested",
+                    "dynamic": "strict",
+                    "properties": {
+                        "id": {
+                            "type": "keyword"
+                        },
+                        "name": {
+                            "type": "text",
+                            "analyzer": "ru_en"
+                        }
+                    }
+                },
+                "actors": {
+                    "type": "nested",
+                    "dynamic": "strict",
+                    "properties": {
+                        "id": {
+                            "type": "keyword"
+                        },
+                        "name": {
+                            "type": "text",
+                            "analyzer": "ru_en"
+                        }
+                    }
+                },
+                "writers": {
+                    "type": "nested",
+                    "dynamic": "strict",
+                    "properties": {
+                        "id": {
+                            "type": "keyword"
+                        },
+                        "name": {
+                            "type": "text",
+                            "analyzer": "ru_en"
+                        }
+                    }
+                }
             }
-          }
         }
-      },
-      "mappings": {
-        "dynamic": "strict",
-        "properties": {
-          "id": {
-            "type": "keyword"
-          },
-          "imdb_rating": {
-            "type": "float"
-          },
-          "genres": {
-            "type": "keyword"
-          },
-          "title": {
-            "type": "text",
-            "analyzer": "ru_en",
-            "fields": {
-              "raw": {
-                "type":  "keyword"
-              }
-            }
-          },
-          "description": {
-            "type": "text",
-            "analyzer": "ru_en"
-          },
-          "directors_names": {
-            "type": "text",
-            "analyzer": "ru_en"
-          },
-          "actors_names": {
-            "type": "text",
-            "analyzer": "ru_en"
-          },
-          "writers_names": {
-            "type": "text",
-            "analyzer": "ru_en"
-          },
-          "directors": {
-            "type": "nested",
-            "dynamic": "strict",
-            "properties": {
-              "id": {
-                "type": "keyword"
-              },
-              "name": {
-                "type": "text",
-                "analyzer": "ru_en"
-              }
-            }
-          },
-          "actors": {
-            "type": "nested",
-            "dynamic": "strict",
-            "properties": {
-              "id": {
-                "type": "keyword"
-              },
-              "name": {
-                "type": "text",
-                "analyzer": "ru_en"
-              }
-            }
-          },
-          "writers": {
-            "type": "nested",
-            "dynamic": "strict",
-            "properties": {
-              "id": {
-                "type": "keyword"
-              },
-              "name": {
-                "type": "text",
-                "analyzer": "ru_en"
-              }
-            }
-          }
-        }
-      }
-     }
+    }
 
     if not es_client.indices.exists(index=settings.index_name):
         es_client.indices.create(index=settings.index_name, body=mapping)
         logger.info(f"Индекс {settings.index_name} создан с маппингом")
+    else:
+        current_mapping = es_client.indices.get_mapping(index=settings.index_name)
+        if current_mapping[settings.index_name] == mapping:
+            logger.info(f"Индекс {settings.index_name} уже существует и имеет тот же маппинг")
+        else:
+            logger.info(f"Индекс {settings.index_name} существует, но маппинг отличается.")
+
+            es_client.indices.delete(index=settings.index_name)
+            logger.info(f"Старый индекс {settings.index_name} удален")
+
+            # Создание нового индекса с обновленным маппингом
+            es_client.indices.create(index=settings.index_name, body=mapping)
+            logger.info(f"Новый индекс {settings.index_name} создан с обновленным маппингом")
 
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
+
+
+
 def load_data_to_es(es_client: Elasticsearch, transformed_data: List[dict]) -> None:
     """ Загрузка данных в Elasticsearch с использованием bulk API """
     try:
@@ -295,40 +321,52 @@ def load_data_to_es(es_client: Elasticsearch, transformed_data: List[dict]) -> N
         logger.error(f"Ошибка: {e}")
 
 
+@backoff.on_exception(
+    backoff.expo,
+    exception=(redis.exceptions.BusyLoadingError, redis.exceptions.ConnectionError, redis.exceptions.TimeoutError),
+    jitter=backoff.full_jitter,
+    max_value=5,
+)
+def get_redis_connection():
+    return Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
+
+
 def etl_process() -> None:
     """ Основной ETL процесс """
-    pg_conn = get_pg_connection_with_retry()
-    es_client = get_es_client()
+    with (get_pg_connection() as pg_conn,
+          get_es_client() as es_client,
+          get_redis_connection() as redis_conn):
+        # pg_conn = get_pg_connection_with_retry()
+        # es_client = get_es_client()
 
-    create_index_with_mapping(es_client)
+        create_index_with_mapping(es_client)
 
-    storage = JsonFileStorage(settings.index_name)
-    state = State(storage)
-    try:
-        sleep_time = settings.default_sleep_time
-        while True:
-            last_synced_time = state.get_state('last_synced_time')
-            if last_synced_time is None or not isinstance(last_synced_time, str):
-                last_synced_time = settings.default_sync_time
-
-            records = extract_data(pg_conn, last_synced_time)
-            if not records:
-                logger.debug(f"Нет новых записей для обработки. Ожидание {sleep_time} секунд...")
-                time.sleep(sleep_time)
-                continue
-
+        # storage = JsonFileStorage(settings.index_name)
+        storage = RedisStorage(redis_adapter=redis_conn)
+        state = State(storage)
+        try:
             sleep_time = settings.default_sleep_time
-            transformed_data = list(transform_data(records))
-            load_data_to_es(es_client, transformed_data)
+            while True:
+                last_synced_time = state.get_state('last_synced_time')
+                if last_synced_time is None or not isinstance(last_synced_time, str):
+                    last_synced_time = settings.default_sync_time
 
-            new_last_synced_time = records[-1][6].isoformat()
-            state.set_state('last_synced_time', new_last_synced_time)
-            logger.debug(f"Обработано и загружено {len(records)} записей. Последняя дата: {new_last_synced_time}")
+                records = extract_data(pg_conn, last_synced_time)
+                if not records:
+                    logger.debug(f"Нет новых записей для обработки. Ожидание {sleep_time} секунд...")
+                    time.sleep(sleep_time)
+                    continue
 
-    except Exception as e:
-        logger.error(f"Ошибка во время ETL процесса: {str(e)}")
-    finally:
-        pg_conn.close()
+                sleep_time = settings.default_sleep_time
+                transformed_data = list(transform_data(records))
+                load_data_to_es(es_client, transformed_data)
+
+                new_last_synced_time = records[-1][6].isoformat()
+                state.set_state('last_synced_time', new_last_synced_time)
+                logger.debug(f"Обработано и загружено {len(records)} записей. Последняя дата: {new_last_synced_time}")
+
+        except Exception as e:
+            logger.error(f"Ошибка во время ETL процесса: {str(e)}")
 
 
 if __name__ == "__main__":
