@@ -294,10 +294,6 @@ def etl_genres()-> None:
                 transformed_data = list(transform_genres(records))
                 load_data_to_es(es_client, transformed_data)
 
-                new_last_synced_time = datetime(2024, 7, 1, tzinfo=timezone.utc).isoformat()
-                print(records)
-                print(records[-1])
-                print(records[-1][2])
                 new_last_synced_time = records[-1][2].isoformat()
                 state.set_state(sync_time_key, new_last_synced_time)
                 logger.debug(f"Обработано и загружено {len(records)} жанров. Последняя дата: {new_last_synced_time}")
@@ -378,7 +374,6 @@ def etl_persons()-> None:
             sync_time_key = 'last_synced_time_persons'  # Уникальный ключ для persons
 
             while True:
-                #TODO change key
                 last_synced_time = state.get_state(sync_time_key)
                 if last_synced_time is None:
                     last_synced_time = settings.default_sync_time
@@ -412,10 +407,6 @@ def etl_persons()-> None:
                 transformed_data = list(transform_persons(records))
                 load_data_to_es(es_client, transformed_data)
 
-                new_last_synced_time = datetime(1970, 1, 1, tzinfo=timezone.utc).isoformat()
-                print(records)
-                print(records[-1])
-                print(records[-1][3])
                 new_last_synced_time = records[-1][3].isoformat()
                 state.set_state(sync_time_key, new_last_synced_time)
                 logger.debug(
