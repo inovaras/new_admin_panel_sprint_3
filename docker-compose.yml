@@ -8,7 +8,7 @@ services:
       - "80:80"
     networks:
       middle-etl:
-        ipv4_address: 172.20.0.1
+        ipv4_address: 172.20.0.8
 
   theatre-db:
     image: postgres:16
@@ -61,31 +61,19 @@ services:
       middle-etl:
         ipv4_address: 172.20.0.44
 
-#
-#  etl-process:
-#    build: .
-##    image: python:3.11
-##    working_dir: /etl
-##    command: >
-##      bash -c "
-##        ./wait-for-it.sh elasticsearch:9200 --
-##        pip install --upgrade pip &&
-##        pip install -r requirements.txt &&
-##        python etl.py
-##      "
-#    env_file:
-#      - ./etl/.env
-##    environment:
-##      - POSTGRES_HOST=theatre-db
-##      - ELASTICSEARCH_HOST=elasticsearch
-#    depends_on:
-#      theatre-db:
-#        condition: service_healthy
-#      elasticsearch:
-#        condition: service_healthy
-#    networks:
-#      middle-etl:
-#        ipv4_address: 172.20.0.5
+
+  etl-process:
+    build: .
+    env_file:
+      - ./etl/.env
+    depends_on:
+      theatre-db:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      middle-etl:
+        ipv4_address: 172.20.0.5
 
 
 

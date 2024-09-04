@@ -14,4 +14,4 @@ RUN pip install --upgrade pip \
 
 COPY ./etl .
 
-CMD ["bash", "-c", "./wait-for-it.sh elasticsearch:9200 -- python etl.py"]
+CMD ["bash", "-c", "./wait-for-it.sh elasticsearch:9200 -- python main.py"]
