@@ -6,6 +6,9 @@ services:
       - ./configs:/etc/nginx/conf.d:ro
     ports:
       - "80:80"
+    networks:
+      middle-etl:
+        ipv4_address: 172.20.0.1
 
   theatre-db:
     image: postgres:16
@@ -18,13 +21,16 @@ services:
     volumes:
       - theatre-db-data-dev:/var/lib/postgresql/data
       - ./database_dump.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready" ]
       interval: 30s
       timeout: 10s
       retries: 5
+    networks:
+      middle-etl:
+        ipv4_address: 172.20.0.2
 
   elasticsearch:
     image: elasticsearch:8.6.2
@@ -32,8 +38,8 @@ services:
       - ES_JAVA_OPTS=-Xms200m -Xmx500m
       - discovery.type=single-node
       - xpack.security.enabled=false
-    ports:
-      - "9200:9200"
+    expose:
+      - "9200"
     volumes:
       - elasticsearch-data-1:/usr/share/elasticsearch/data
     healthcheck:
@@ -41,6 +47,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    networks:
+      middle-etl:
+        ipv4_address: 172.20.0.3
 
   redis:
     image: redis:7.4.0-alpine
@@ -48,29 +57,36 @@ services:
     restart: always
     volumes:
       - middle2_redis_data:/data
+    networks:
+      middle-etl:
+        ipv4_address: 172.20.0.44
 
+#
+#  etl-process:
+#    build: .
+##    image: python:3.11
+##    working_dir: /etl
+##    command: >
+##      bash -c "
+##        ./wait-for-it.sh elasticsearch:9200 --
+##        pip install --upgrade pip &&
+##        pip install -r requirements.txt &&
+##        python etl.py
+##      "
+#    env_file:
+#      - ./etl/.env
+##    environment:
+##      - POSTGRES_HOST=theatre-db
+##      - ELASTICSEARCH_HOST=elasticsearch
+#    depends_on:
+#      theatre-db:
+#        condition: service_healthy
+#      elasticsearch:
+#        condition: service_healthy
+#    networks:
+#      middle-etl:
+#        ipv4_address: 172.20.0.5
 
-  etl-process:
-    build: .
-#    image: python:3.11
-#    working_dir: /etl
-#    command: >
-#      bash -c "
-#        ./wait-for-it.sh elasticsearch:9200 --
-#        pip install --upgrade pip &&
-#        pip install -r requirements.txt &&
-#        python etl.py
-#      "
-    env_file:
-      - ./etl/.env
-#    environment:
-#      - POSTGRES_HOST=theatre-db
-#      - ELASTICSEARCH_HOST=elasticsearch
-    depends_on:
-      theatre-db:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
 
 
 volumes:
@@ -79,3 +95,14 @@ volumes:
   middle2_redis_data:
     external: True
   elasticsearch-data-1:
+
+networks:
+  middle-etl:
+    external:
+      True
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
