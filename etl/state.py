@@ -46,7 +46,7 @@ class RedisStorage(BaseStorage):
     def retrieve_state(self) -> Dict[str, Any]:
         """Получить состояние из хранилища."""
         state = self.redis_adapter.hgetall(name="state")
-        logger.debug(state)
+        # logger.debug(state)
         return state
 
 
@@ -93,12 +93,18 @@ class State:
 
     def get_state(self, key: str) -> Any:
         """Получить состояние по определённому ключу."""
-        state = self.storage.retrieve_state()
-        if len(state) == 0:
+        # state = self.storage.retrieve_state()
+        # if len(state) == 0:
+        #     return None
+        # state = state[key]
+        # return state
+        try:
+            state = self.storage.retrieve_state()
+            return state.get(key, None)  # Если ключа нет, возвращаем None
+        except KeyError:
             return None
 
-        state = state[key]
-        return state
+
 
 
 if __name__ == "__main__":

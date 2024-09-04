@@ -136,13 +136,17 @@ def etl_filmwork() -> None:
         storage = RedisStorage(redis_adapter=redis_conn)
         state = State(storage)
         try:
-            # sleep_time = settings.default_sleep_time
-            sleep_time = 40
+            sleep_time = settings.default_sleep_time
+            sync_time_key = 'last_synced_time_filmwork'
             while True:
-                sync_time_key = 'last_synced_time_filmwork'
+
                 last_synced_time = state.get_state(sync_time_key)
-                if last_synced_time is None or not isinstance(last_synced_time, str):
+                if last_synced_time is None:
                     last_synced_time = settings.default_sync_time
+                    logger.debug(
+                        f"Ключ состояния {sync_time_key} для фильмов не найден, использовано значение по умолчанию: {last_synced_time}")
+                else:
+                    logger.debug(f"Последняя дата обновления фильмов (ключ {sync_time_key}): {last_synced_time}")
 
                 query = """
                         SELECT
@@ -176,7 +180,7 @@ def etl_filmwork() -> None:
                     """
                 records = extract_data(pg_conn, query, last_synced_time)
                 if not records:
-                    logger.debug(f"Нет новых записей для обработки. Ожидание {sleep_time} секунд...")
+                    logger.debug(f"Нет новых записей фильмов для обработки. Ожидание {sleep_time} секунд...")
                     time.sleep(sleep_time)
                     continue
 
@@ -199,8 +203,53 @@ def etl_genres()-> None:
           get_redis_connection() as redis_conn):
 
         mapping = {
+            "settings": {
+                "refresh_interval": "1s",
+                "analysis": {
+                    "filter": {
+                        "english_stop": {
+                            "type": "stop",
+                            "stopwords": "_english_"
+                        },
+                        "english_stemmer": {
+                            "type": "stemmer",
+                            "language": "english"
+                        },
+                        "english_possessive_stemmer": {
+                            "type": "stemmer",
+                            "language": "possessive_english"
+                        },
+                        "russian_stop": {
+                            "type": "stop",
+                            "stopwords": "_russian_"
+                        },
+                        "russian_stemmer": {
+                            "type": "stemmer",
+                            "language": "russian"
+                        }
+                    },
+                    "analyzer": {
+                        "ru_en": {
+                            "tokenizer": "standard",
+                            "filter": [
+                                "lowercase",
+                                "english_stop",
+                                "english_stemmer",
+                                "english_possessive_stemmer",
+                                "russian_stop",
+                                "russian_stemmer"
+                            ]
+                        }
+                    }
+                }
+            },
             "mappings": {
+                "dynamic": "strict",
                 "properties": {
+                    "id": {
+                        "type": "keyword"
+
+                    },
                     "name": {
                         "type": "keyword"
                     }
@@ -213,24 +262,31 @@ def etl_genres()-> None:
         state = State(storage)
         try:
             sleep_time = settings.default_sleep_time
-            sleep_time = 1
+            sync_time_key = 'last_synced_time_genres'
             while True:
-                sync_time_key = 'last_synced_time_genres'
-                try:
-                    last_synced_time = state.get_state(sync_time_key)
-                except KeyError as k_err:
+                last_synced_time = state.get_state(sync_time_key)
+                if last_synced_time is None:
                     last_synced_time = settings.default_sync_time
-                    state.set_state(sync_time_key, last_synced_time)
-                if last_synced_time is None or not isinstance(last_synced_time, str):
-                    last_synced_time = settings.default_sync_time
+                    logger.debug(
+                        f"Ключ состояния {sync_time_key} для жанров не найден, использовано значение по умолчанию: {last_synced_time}")
+                else:
+                    logger.debug(f"Последняя дата обновления жанров (ключ {sync_time_key}): {last_synced_time}")
 
                 query = """
-                    SELECT DISTINCT g.name
+                    SELECT
+                        g.id AS id,
+                        g.name AS name,
+                        g.modified 
                     FROM content.genre g
+
+                    WHERE g.modified > %s
+                    GROUP BY g.id
+                    ORDER BY g.modified
+                    LIMIT %s;
                 """
                 records = extract_data(pg_conn, query, last_synced_time)
                 if not records:
-                    logger.debug(f"Нет новых записей для обработки. Ожидание {sleep_time} секунд...")
+                    logger.debug(f"Нет новых записей жанров для обработки. Ожидание {sleep_time} секунд...")
                     time.sleep(sleep_time)
                     continue
 
@@ -238,7 +294,11 @@ def etl_genres()-> None:
                 transformed_data = list(transform_genres(records))
                 load_data_to_es(es_client, transformed_data)
 
-                new_last_synced_time = records[-1][6].isoformat()
+                new_last_synced_time = datetime(2024, 7, 1, tzinfo=timezone.utc).isoformat()
+                print(records)
+                print(records[-1])
+                print(records[-1][2])
+                new_last_synced_time = records[-1][2].isoformat()
                 state.set_state(sync_time_key, new_last_synced_time)
                 logger.debug(f"Обработано и загружено {len(records)} жанров. Последняя дата: {new_last_synced_time}")
 
@@ -253,6 +313,46 @@ def etl_persons()-> None:
           get_redis_connection() as redis_conn):
 
         mapping = {
+            "settings": {
+                "refresh_interval": "1s",
+                "analysis": {
+                    "filter": {
+                        "english_stop": {
+                            "type": "stop",
+                            "stopwords": "_english_"
+                        },
+                        "english_stemmer": {
+                            "type": "stemmer",
+                            "language": "english"
+                        },
+                        "english_possessive_stemmer": {
+                            "type": "stemmer",
+                            "language": "possessive_english"
+                        },
+                        "russian_stop": {
+                            "type": "stop",
+                            "stopwords": "_russian_"
+                        },
+                        "russian_stemmer": {
+                            "type": "stemmer",
+                            "language": "russian"
+                        }
+                    },
+                    "analyzer": {
+                        "ru_en": {
+                            "tokenizer": "standard",
+                            "filter": [
+                                "lowercase",
+                                "english_stop",
+                                "english_stemmer",
+                                "english_possessive_stemmer",
+                                "russian_stop",
+                                "russian_stemmer"
+                            ]
+                        }
+                    }
+                }
+            },
             "mappings": {
                 "dynamic": "strict",
                 "properties": {
@@ -274,36 +374,49 @@ def etl_persons()-> None:
         storage = RedisStorage(redis_adapter=redis_conn)
         state = State(storage)
         try:
-            # sleep_time = settings.default_sleep_time
-            sleep_time = 50
+            sleep_time = settings.default_sleep_time
+            sync_time_key = 'last_synced_time_persons'  # Уникальный ключ для persons
+
             while True:
                 #TODO change key
-                sync_time_key = 'last_synced_time_persons'
                 last_synced_time = state.get_state(sync_time_key)
-                if last_synced_time is None or not isinstance(last_synced_time, str):
+                if last_synced_time is None:
                     last_synced_time = settings.default_sync_time
+                    logger.debug(
+                        f"Ключ состояния {sync_time_key} для персоналий не найден, использовано значение по умолчанию: {last_synced_time}")
+                else:
+                    logger.debug(f"Последняя дата обновления персоналий (ключ {sync_time_key}): {last_synced_time}")
 
                 query = """
                         SELECT
                             p.id AS person_id,
                             p.full_name,
-                            json_agg(DISTINCT fw.title) AS movies
+                            json_agg(DISTINCT fw.title) AS movies,
+                            p.modified 
                         FROM content.person p
                         LEFT JOIN content.person_film_work pfw ON p.id = pfw.person_id
                         LEFT JOIN content.film_work fw ON pfw.film_work_id = fw.id
-                        GROUP BY p.id, p.full_name;
+                        WHERE p.modified > %s
+                        GROUP BY p.id
+                        ORDER BY p.modified
+                        LIMIT %s;
+                        
                     """
                 records = extract_data(pg_conn, query, last_synced_time)
                 if not records:
-                    logger.debug(f"Нет новых записей для обработки. Ожидание {sleep_time} секунд...")
+                    logger.debug(f"Нет новых записей персоналий для обработки. Ожидание {sleep_time} секунд...")
                     time.sleep(sleep_time)
                     continue
 
                 sleep_time = settings.default_sleep_time
-                transformed_data = list(transform_genres(records))
+                transformed_data = list(transform_persons(records))
                 load_data_to_es(es_client, transformed_data)
 
-                new_last_synced_time = records[-1][6].isoformat()
+                new_last_synced_time = datetime(1970, 1, 1, tzinfo=timezone.utc).isoformat()
+                print(records)
+                print(records[-1])
+                print(records[-1][3])
+                new_last_synced_time = records[-1][3].isoformat()
                 state.set_state(sync_time_key, new_last_synced_time)
                 logger.debug(
                     f"Обработано и загружено {len(records)} персоналий. Последняя дата: {new_last_synced_time}")

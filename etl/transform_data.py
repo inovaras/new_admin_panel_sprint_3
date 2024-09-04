@@ -60,6 +60,7 @@ def transform_genres(records: List[dict]) -> Generator[dict, None, None]:
             "_index": settings.genres_index_name,
             "_id": record["name"],
             "_source": {
+                "id": record["id"],
                 "name": record["name"]
             }
         }

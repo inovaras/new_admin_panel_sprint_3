@@ -8,7 +8,7 @@ from get_connections import *
 
 def extract_data(conn: PGConnection, query, last_synced_time: Optional[str] = None, batch_size: int = 100) -> List[dict]:
     """Извлечение данных из PostgreSQL."""
-    logger.debug(f"Последняя дата обновления: {last_synced_time}")
+    # logger.debug(f"Последняя дата обновления: {last_synced_time}")
     try:
         with conn.cursor(cursor_factory=DictCursor) as cursor:
 
