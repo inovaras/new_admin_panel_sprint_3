@@ -146,7 +146,8 @@ def etl_filmwork() -> None:
                     logger.debug(
                         f"Ключ состояния {sync_time_key} для фильмов не найден, использовано значение по умолчанию: {last_synced_time}")
                 else:
-                    logger.debug(f"Последняя дата обновления фильмов (ключ {sync_time_key}): {last_synced_time}")
+                    # logger.debug(f"Последняя дата обновления фильмов (ключ {sync_time_key}): {last_synced_time}")
+                    pass
 
                 query = """
                         SELECT
@@ -180,7 +181,7 @@ def etl_filmwork() -> None:
                     """
                 records = extract_data(pg_conn, query, last_synced_time)
                 if not records:
-                    logger.debug(f"Нет новых записей фильмов для обработки. Ожидание {sleep_time} секунд...")
+                    # logger.debug(f"Нет новых записей фильмов для обработки. Ожидание {sleep_time} секунд...")
                     time.sleep(sleep_time)
                     continue
 
@@ -270,7 +271,8 @@ def etl_genres()-> None:
                     logger.debug(
                         f"Ключ состояния {sync_time_key} для жанров не найден, использовано значение по умолчанию: {last_synced_time}")
                 else:
-                    logger.debug(f"Последняя дата обновления жанров (ключ {sync_time_key}): {last_synced_time}")
+                    # logger.debug(f"Последняя дата обновления жанров (ключ {sync_time_key}): {last_synced_time}")
+                    pass
 
                 query = """
                     SELECT
@@ -286,7 +288,7 @@ def etl_genres()-> None:
                 """
                 records = extract_data(pg_conn, query, last_synced_time)
                 if not records:
-                    logger.debug(f"Нет новых записей жанров для обработки. Ожидание {sleep_time} секунд...")
+                    # logger.debug(f"Нет новых записей жанров для обработки. Ожидание {sleep_time} секунд...")
                     time.sleep(sleep_time)
                     continue
 
@@ -371,7 +373,7 @@ def etl_persons()-> None:
         state = State(storage)
         try:
             sleep_time = settings.default_sleep_time
-            sync_time_key = 'last_synced_time_persons'  # Уникальный ключ для persons
+            sync_time_key = 'last_synced_time_persons'
 
             while True:
                 last_synced_time = state.get_state(sync_time_key)
@@ -380,7 +382,8 @@ def etl_persons()-> None:
                     logger.debug(
                         f"Ключ состояния {sync_time_key} для персоналий не найден, использовано значение по умолчанию: {last_synced_time}")
                 else:
-                    logger.debug(f"Последняя дата обновления персоналий (ключ {sync_time_key}): {last_synced_time}")
+                    # logger.debug(f"Последняя дата обновления персоналий (ключ {sync_time_key}): {last_synced_time}")
+                    pass
 
                 query = """
                         SELECT
@@ -399,7 +402,7 @@ def etl_persons()-> None:
                     """
                 records = extract_data(pg_conn, query, last_synced_time)
                 if not records:
-                    logger.debug(f"Нет новых записей персоналий для обработки. Ожидание {sleep_time} секунд...")
+                    # logger.debug(f"Нет новых записей персоналий для обработки. Ожидание {sleep_time} секунд...")
                     time.sleep(sleep_time)
                     continue
 
