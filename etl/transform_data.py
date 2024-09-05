@@ -73,7 +73,7 @@ def transform_persons(records: List[Dict[str, Any]]) -> Generator[Dict[str, Any]
             "_index": settings.persons_index_name,
             "_id": record["person_id"],
             "_source": {
-                "uuid": record["person_id"],
+                "id": record["person_id"],
                 "full_name": record["full_name"],
                 "movies": record["movies"]
             }

@@ -354,7 +354,7 @@ def etl_persons()-> None:
             "mappings": {
                 "dynamic": "strict",
                 "properties": {
-                    "uuid": {
+                    "id": {
                         "type": "keyword"
                     },
                     "full_name": {
@@ -362,7 +362,7 @@ def etl_persons()-> None:
                         "analyzer": "standard"
                     },
                     "movies": {
-                        "type": "text"
+                        "type": "keyword",
                     }
                 }
             }
@@ -389,7 +389,7 @@ def etl_persons()-> None:
                         SELECT
                             p.id AS person_id,
                             p.full_name,
-                            json_agg(DISTINCT fw.title) AS movies,
+                            json_agg(DISTINCT fw.id) AS movies,
                             p.modified 
                         FROM content.person p
                         LEFT JOIN content.person_film_work pfw ON p.id = pfw.person_id
